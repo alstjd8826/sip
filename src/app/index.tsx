@@ -1,98 +1,91 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useCallback, useState } from 'react';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+// Reanimated 4 의 runOnJS 자리. reanimated 가 아니라 worklets 에서 나온다.
+import { scheduleOnRN } from 'react-native-worklets';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { DrinkBar } from '@/components/DrinkBar';
+import { DRINK_BY_ID, type DrinkId } from '@/drinks/catalog';
+import BeerGlass from '@/liquid/BeerGlass';
+import DrinkGlass from '@/liquid/DrinkGlass';
+import { useDrinkPhysics } from '@/liquid/useDrinkPhysics';
+import { motion } from '@/theme';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+export default function GlassScreen() {
+  const [id, setId] = useState<DrinkId>('beer');
+  const drink = DRINK_BY_ID[id];
+  const { width } = useWindowDimensions();
+
+  const { paramsSynchronizable, refill, drag, dragEnd } = useDrinkPhysics(drink);
+
+
+  const onDrag = useCallback(
+    (dx: number) => drag(dx / width),
+    [drag, width]
   );
-}
 
-export default function HomeScreen() {
+  /**
+   * 기울이기의 두 번째 입력.
+   *
+   * 시뮬레이터에는 가속도계가 없어서 이게 없으면 액체가 멈춰 있는 것밖에
+   * 확인할 수 없다. 폰을 책상에 둔 채로도 쓸 수 있다는 게 덤이다.
+   *
+   * 탭은 다시 채우기. 드래그와 겹치지 않게 이동 거리로 갈린다.
+   */
+  const pan = Gesture.Pan()
+    .minDistance(4)
+    .onUpdate((e) => {
+      'worklet';
+      scheduleOnRN(onDrag, e.translationX);
+    })
+    .onFinalize(() => {
+      'worklet';
+      scheduleOnRN(dragEnd);
+    });
+
+  const tap = Gesture.Tap().onEnd((_e, ok) => {
+    'worklet';
+    if (ok) scheduleOnRN(refill);
+  });
+
+  const gesture = Gesture.Exclusive(pan, tap);
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <View style={styles.root}>
+      <GestureDetector gesture={gesture}>
+        <View style={StyleSheet.absoluteFill}>
+          {/*
+            음료가 바뀌면 잔이 갈린다. 위치가 아니라 내용물이 바뀐 것이므로
+            움직임 없이 겹쳐 녹인다 — 액체가 옆에서 밀려 들어오면 잔이
+            바뀐 것처럼 보인다.
+          */}
+          <Animated.View
+            key={id}
+            style={StyleSheet.absoluteFill}
+            entering={FadeIn.duration(motion.duration.base)}
+            exiting={FadeOut.duration(motion.duration.exit)}>
+            {id === 'beer' ? (
+              <BeerGlass
+                paramsSynchronizable={paramsSynchronizable}
+                style={StyleSheet.absoluteFill}
+              />
+            ) : (
+              <DrinkGlass
+                drink={drink}
+                paramsSynchronizable={paramsSynchronizable}
+                style={StyleSheet.absoluteFill}
+              />
+            )}
+          </Animated.View>
+        </View>
+      </GestureDetector>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+      <DrinkBar value={id} onChange={setId} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+  root: { flex: 1, backgroundColor: '#000' },
 });
